@@ -2,3 +2,5 @@ data/
 credentials/
 models/
 output/
+scripts/pyzemberek-data/
+*.pyc
