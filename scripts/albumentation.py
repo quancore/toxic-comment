@@ -220,6 +220,9 @@ class SynthesicOpenSubtitlesTransform(NLPTransform):
 
     def generate_synthesic_sample(self, text, toxic):
         try:
+            if isinstance(text, (np.ndarray, np.generic)):
+                text = text[0]
+
             texts = [text]
             if toxic == 0:
                 for i in range(random.randint(1,5)):

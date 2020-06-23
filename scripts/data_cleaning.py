@@ -1,17 +1,27 @@
 import tqdm
 import re
+import time
+
 import numpy as np # linear algebra
 import pandas as pd # data processing,
+from abc import ABC, abstractmethod
 from pandarallel import pandarallel
 import nltk
 import emoji
+
 from nltk import sent_tokenize
 from nltk.tokenize.treebank import TreebankWordTokenizer
+from num2words import num2words
+
+import language_tool_python
+from turkishnlp import detector
+import string
 
 nltk.download('punkt')
 tokenizer = TreebankWordTokenizer()
 
-LANGS = {
+class TextTransformation(ABC):
+    LANGS = {
     'en': 'english',
     'it': 'italian', 
     'fr': 'french', 
@@ -19,168 +29,479 @@ LANGS = {
     'tr': 'turkish', 
     'ru': 'russian',
     'pt': 'portuguese'
-}
+    }
+    @abstractmethod
+    def __call__(self, text: str, lang: str = None) -> tuple:
+        pass 
 
-def clean_text(text, lang='en'):
-    try:
-        text = str(text)
-        text = re.sub(r'[0-9"]', '', text)
-        text = re.sub(r'#[\S]+\b', '', text)
-        text = re.sub(r'@[\S]+\b', '', text)
-        text = re.sub(r'https?\S+', '', text)
-        text = re.sub('<.*?>+', '', text)
-        text = re.sub(r'\s+', ' ', text)
-        # text = re.sub("\[\[User.*",'', text)
-        # text = re.sub("\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}",'', text)
-        text = exclude_duplicate_sentences(text, lang)
-    except:
-        print(f'Exception occured: {text}, {type(text)}')
-        raise
+class LowerCaseTransformation(TextTransformation):
+    '''
+    Lower case given text.
+    '''
+    def __call__(self, text: str, lang: str = None) -> tuple:
+        return text.lower(), lang
 
-    return text.strip()
+class NonLatinTransformation(TextTransformation):
+    '''
+    Remove non-latin characters from latin origin languages.
+    '''
+    def __call__(self, text: str, lang: str = None) -> tuple:
+        if lang is not None and lang != 'ru':
+            return re.sub('[^\x00-\x7F\x80-\xFF\u0100-\u017F\u0180-\u024F\u1E00-\u1EFF]', '', text), lang
+        
+        return text, lang
 
-puncts = [',', '.', '"', ':', ')', '(', '-', '!', '?', '|', ';', "'", '$', '&', '/', '[', ']', '>', '%', '=', '#', '*', '+', '\\', '•',  '~', '@', '£',
- '·', '_', '{', '}', '©', '^', '®', '`',  '<', '→', '°', '€', '™', '›',  '♥', '←', '×', '§', '″', '′', '█', '½', '…', '\xa0', '\t',
- '“', '★', '”', '–', '●', '►', '−', '¢', '²', '¬', '░', '¶', '↑', '±', '¿', '▾', '═', '¦', '║', '―', '¥', '▓', '—', '‹', '─', '\u3000', '\u202f',
- '▒', '：', '¼', '⊕', '▼', '▪', '†', '■', '’', '▀', '¨', '▄', '♫', '☆', '¯', '♦', '¤', '▲', '¸', '¾', '⋅', '‘', '∞', '«',
- '∙', '）', '↓', '、', '│', '（', '»', '，', '♪', '╩', '╚', '³', '・', '╦', '╣', '╔', '╗', '▬', '❤', 'ï', 'Ø', '¹', '≤', '‡', '√', ]
+class RegexTransformation(TextTransformation):
+    '''
+    Apply basic regex trasnformation and remove duplicate sentences.
+    '''
+    def _get_sentences(self, text: str, lang: str = 'en'):
+        return sent_tokenize(str(text), self.LANGS.get(lang, 'english'))
 
-
-mispell_dict = {"aren't" : "are not",
-"can't" : "cannot",
-"couldn't" : "could not",
-"couldnt" : "could not",
-"didn't" : "did not",
-"doesn't" : "does not",
-"doesnt" : "does not",
-"don't" : "do not",
-"don\x89Ûªt": "do not",
-"hadn't" : "had not",
-"hasn't" : "has not",
-"haven't" : "have not",
-"havent" : "have not",
-"he'd" : "he would",
-"he'll" : "he will",
-"he's" : "he is",
-"i'd" : "I would",
-"i'd" : "I had",
-"i'll" : "I will",
-"i'm" : "I am",
-"I'm": "I am",
-"I\x89Ûªm": "I am",
-"isn't" : "is not",
-"it's" : "it is",
-"it'll":"it will",
-"i've" : "I have",
-"let's" : "let us",
-"mightn't" : "might not",
-"mustn't" : "must not",
-"shan't" : "shall not",
-"she'd" : "she would",
-"she'll" : "she will",
-"she's" : "she is",
-"shouldn't" : "should not",
-"shouldnt" : "should not",
-"that's" : "that is",
-"thats" : "that is",
-"there's" : "there is",
-"theres" : "there is",
-"they'd" : "they would",
-"they'll" : "they will",
-"they're" : "they are",
-"theyre":  "they are",
-"they've" : "they have",
-"we'd" : "we would",
-"we're" : "we are",
-"weren't" : "were not",
-"we've" : "we have",
-"what'll" : "what will",
-"what're" : "what are",
-"what's" : "what is",
-"what've" : "what have",
-"where's" : "where is",
-"who'd" : "who would",
-"who'll" : "who will",
-"who're" : "who are",
-"who's" : "who is",
-"who've" : "who have",
-"won't" : "will not",
-"wouldn't" : "would not",
-"you'd" : "you would",
-"you'll" : "you will",
-"you're" : "you are",
-"you've" : "you have",
-"you\x89Ûªve": "you have",
-"'re": " are",
-"wasn't": "was not",
-"we'll":" will",
-"didn't": "did not",
-"tryin'":"trying"}
-
-def clean_puncts(x):
-    x = str(x).replace("\n","")
-    for punct in puncts:
-        x = x.replace(punct, f"")
-    return x
-
-
-def clean_numbers(x):
-    x = re.sub('[0-9]{5,}', '#####', x)
-    x = re.sub('[0-9]{4}', '####', x)
-    x = re.sub('[0-9]{3}', '###', x)
-    x = re.sub('[0-9]{2}', '##', x)
-    return x
-
-
-def handle_contractions(x, lang):
-    if lang == 'en':
-        x = tokenizer.tokenize(x)
-    return x
-
-def fix_quote(x):
-    x = [x_[1:] if x_.startswith("'") else x_ for x_ in x]
-    x = ' '.join(x)
-    return x
-
-def _get_mispell(mispell_dict):
-    mispell_re = re.compile('(%s)' % '|'.join(mispell_dict.keys()))
-    return mispell_dict, mispell_re
-
-
-def replace_typical_misspell(text, lang):
-    if lang == 'en':
-        mispellings, mispellings_re = _get_mispell(mispell_dict)
+    def _exclude_duplicate_sentences(self, text: str, lang: str = 'en'):
+        sentences = []
+        for sentence in self._get_sentences(text, lang):
+            sentence = sentence.strip()
+            if sentence not in sentences:
+                sentences.append(sentence)
+        
+        return ' '.join(sentences)
     
+    def __call__(self, text: str, lang: str = None) -> tuple:
+        try:
+            text = str(text)
+            text = re.sub(r'#[\S]+\b', '', text)
+            text = re.sub(r'@[\S]+\b', '', text)
+            text = re.sub(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\), ]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', '', text)
+            text = re.sub('<.*?>+', '', text)
+            text = re.sub(r'\s+', ' ', text)
+            # text = re.sub("\[\[User.*",'', text)
+            # text = re.sub("\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}",'', text)
+            text = self._exclude_duplicate_sentences(text, lang)
+        except:
+            print(f'Exception occured on regex transformation: {text}, {type(text)}')
+            raise
+
+        return text.strip(), lang
+
+class PunctuationTransformation(TextTransformation):
+    '''
+    Handle punctuations and special characters.
+    '''
+    def __call__(self, text: str, lang: str = None) -> tuple:
+        PUNCT_TO_REMOVE = string.punctuation + '\n'
+        text = text.translate(str.maketrans('', '', PUNCT_TO_REMOVE))
+        return text, lang
+
+class EmojiTransformation(TextTransformation):
+    '''
+    Remove emoji or convert to english text.
+    '''
+    def __init__(self, remove: bool = True):
+        '''
+        If remove is true, remove it else convert it to text.
+        '''
+        self.remove = remove
+    
+    def __call__(self, text: str, lang: str = None) -> tuple:
+        if self.remove:
+            return emoji.get_emoji_regexp().sub(u'', text), lang
+        else:
+            return emoji.demojize(text), lang
+
+class EmojiconTransformation(TextTransformation):
+    EMOTICONS = {
+    u":‑\)":"Happy face or smiley",
+    u":\)":"Happy face or smiley",
+    u":-\]":"Happy face or smiley",
+    u":\]":"Happy face or smiley",
+    u":-3":"Happy face smiley",
+    u":3":"Happy face smiley",
+    u":->":"Happy face smiley",
+    u":>":"Happy face smiley",
+    u"8-\)":"Happy face smiley",
+    u":o\)":"Happy face smiley",
+    u":-\}":"Happy face smiley",
+    u":\}":"Happy face smiley",
+    u":-\)":"Happy face smiley",
+    u":c\)":"Happy face smiley",
+    u":\^\)":"Happy face smiley",
+    u"=\]":"Happy face smiley",
+    u"=\)":"Happy face smiley",
+    u":‑D":"Laughing, big grin or laugh with glasses",
+    u":D":"Laughing, big grin or laugh with glasses",
+    u"8‑D":"Laughing, big grin or laugh with glasses",
+    u"8D":"Laughing, big grin or laugh with glasses",
+    u"X‑D":"Laughing, big grin or laugh with glasses",
+    u"XD":"Laughing, big grin or laugh with glasses",
+    u"=D":"Laughing, big grin or laugh with glasses",
+    u"=3":"Laughing, big grin or laugh with glasses",
+    u"B\^D":"Laughing, big grin or laugh with glasses",
+    u":-\)\)":"Very happy",
+    u":‑\(":"Frown, sad, andry or pouting",
+    u":-\(":"Frown, sad, andry or pouting",
+    u":\(":"Frown, sad, andry or pouting",
+    u":‑c":"Frown, sad, andry or pouting",
+    u":c":"Frown, sad, andry or pouting",
+    u":‑<":"Frown, sad, andry or pouting",
+    u":<":"Frown, sad, andry or pouting",
+    u":‑\[":"Frown, sad, andry or pouting",
+    u":\[":"Frown, sad, andry or pouting",
+    u":-\|\|":"Frown, sad, andry or pouting",
+    u">:\[":"Frown, sad, andry or pouting",
+    u":\{":"Frown, sad, andry or pouting",
+    u":@":"Frown, sad, andry or pouting",
+    u">:\(":"Frown, sad, andry or pouting",
+    u":'‑\(":"Crying",
+    u":'\(":"Crying",
+    u":'‑\)":"Tears of happiness",
+    u":'\)":"Tears of happiness",
+    u"D‑':":"Horror",
+    u"D:<":"Disgust",
+    u"D:":"Sadness",
+    u"D8":"Great dismay",
+    u"D;":"Great dismay",
+    u"D=":"Great dismay",
+    u"DX":"Great dismay",
+    u":‑O":"Surprise",
+    u":O":"Surprise",
+    u":‑o":"Surprise",
+    u":o":"Surprise",
+    u":-0":"Shock",
+    u"8‑0":"Yawn",
+    u">:O":"Yawn",
+    u":-\*":"Kiss",
+    u":\*":"Kiss",
+    u":X":"Kiss",
+    u";‑\)":"Wink or smirk",
+    u";\)":"Wink or smirk",
+    u"\*-\)":"Wink or smirk",
+    u"\*\)":"Wink or smirk",
+    u";‑\]":"Wink or smirk",
+    u";\]":"Wink or smirk",
+    u";\^\)":"Wink or smirk",
+    u":‑,":"Wink or smirk",
+    u";D":"Wink or smirk",
+    u":‑P":"Tongue sticking out, cheeky, playful or blowing a raspberry",
+    u":P":"Tongue sticking out, cheeky, playful or blowing a raspberry",
+    u"X‑P":"Tongue sticking out, cheeky, playful or blowing a raspberry",
+    u"XP":"Tongue sticking out, cheeky, playful or blowing a raspberry",
+    u":‑Þ":"Tongue sticking out, cheeky, playful or blowing a raspberry",
+    u":Þ":"Tongue sticking out, cheeky, playful or blowing a raspberry",
+    u":b":"Tongue sticking out, cheeky, playful or blowing a raspberry",
+    u"d:":"Tongue sticking out, cheeky, playful or blowing a raspberry",
+    u"=p":"Tongue sticking out, cheeky, playful or blowing a raspberry",
+    u">:P":"Tongue sticking out, cheeky, playful or blowing a raspberry",
+    u":‑/":"Skeptical, annoyed, undecided, uneasy or hesitant",
+    u":/":"Skeptical, annoyed, undecided, uneasy or hesitant",
+    u":-[.]":"Skeptical, annoyed, undecided, uneasy or hesitant",
+    u">:[(\\\)]":"Skeptical, annoyed, undecided, uneasy or hesitant",
+    u">:/":"Skeptical, annoyed, undecided, uneasy or hesitant",
+    u":[(\\\)]":"Skeptical, annoyed, undecided, uneasy or hesitant",
+    u"=/":"Skeptical, annoyed, undecided, uneasy or hesitant",
+    u"=[(\\\)]":"Skeptical, annoyed, undecided, uneasy or hesitant",
+    u":L":"Skeptical, annoyed, undecided, uneasy or hesitant",
+    u"=L":"Skeptical, annoyed, undecided, uneasy or hesitant",
+    u":S":"Skeptical, annoyed, undecided, uneasy or hesitant",
+    u":‑\|":"Straight face",
+    u":\|":"Straight face",
+    u":$":"Embarrassed or blushing",
+    u":‑x":"Sealed lips or wearing braces or tongue-tied",
+    u":x":"Sealed lips or wearing braces or tongue-tied",
+    u":‑#":"Sealed lips or wearing braces or tongue-tied",
+    u":#":"Sealed lips or wearing braces or tongue-tied",
+    u":‑&":"Sealed lips or wearing braces or tongue-tied",
+    u":&":"Sealed lips or wearing braces or tongue-tied",
+    u"O:‑\)":"Angel, saint or innocent",
+    u"O:\)":"Angel, saint or innocent",
+    u"0:‑3":"Angel, saint or innocent",
+    u"0:3":"Angel, saint or innocent",
+    u"0:‑\)":"Angel, saint or innocent",
+    u"0:\)":"Angel, saint or innocent",
+    u":‑b":"Tongue sticking out, cheeky, playful or blowing a raspberry",
+    u"0;\^\)":"Angel, saint or innocent",
+    u">:‑\)":"Evil or devilish",
+    u">:\)":"Evil or devilish",
+    u"\}:‑\)":"Evil or devilish",
+    u"\}:\)":"Evil or devilish",
+    u"3:‑\)":"Evil or devilish",
+    u"3:\)":"Evil or devilish",
+    u">;\)":"Evil or devilish",
+    u"\|;‑\)":"Cool",
+    u"\|‑O":"Bored",
+    u":‑J":"Tongue-in-cheek",
+    u"#‑\)":"Party all night",
+    u"%‑\)":"Drunk or confused",
+    u"%\)":"Drunk or confused",
+    u":-###..":"Being sick",
+    u":###..":"Being sick",
+    u"<:‑\|":"Dump",
+    u"\(>_<\)":"Troubled",
+    u"\(>_<\)>":"Troubled",
+    u"\(';'\)":"Baby",
+    u"\(\^\^>``":"Nervous or Embarrassed or Troubled or Shy or Sweat drop",
+    u"\(\^_\^;\)":"Nervous or Embarrassed or Troubled or Shy or Sweat drop",
+    u"\(-_-;\)":"Nervous or Embarrassed or Troubled or Shy or Sweat drop",
+    u"\(~_~;\) \(・\.・;\)":"Nervous or Embarrassed or Troubled or Shy or Sweat drop",
+    u"\(-_-\)zzz":"Sleeping",
+    u"\(\^_-\)":"Wink",
+    u"\(\(\+_\+\)\)":"Confused",
+    u"\(\+o\+\)":"Confused",
+    u"\(o\|o\)":"Ultraman",
+    u"\^_\^":"Joyful",
+    u"\(\^_\^\)/":"Joyful",
+    u"\(\^O\^\)／":"Joyful",
+    u"\(\^o\^\)／":"Joyful",
+    u"\(__\)":"Kowtow as a sign of respect, or dogeza for apology",
+    u"_\(\._\.\)_":"Kowtow as a sign of respect, or dogeza for apology",
+    u"<\(_ _\)>":"Kowtow as a sign of respect, or dogeza for apology",
+    u"<m\(__\)m>":"Kowtow as a sign of respect, or dogeza for apology",
+    u"m\(__\)m":"Kowtow as a sign of respect, or dogeza for apology",
+    u"m\(_ _\)m":"Kowtow as a sign of respect, or dogeza for apology",
+    u"\('_'\)":"Sad or Crying",
+    u"\(/_;\)":"Sad or Crying",
+    u"\(T_T\) \(;_;\)":"Sad or Crying",
+    u"\(;_;":"Sad of Crying",
+    u"\(;_:\)":"Sad or Crying",
+    u"\(;O;\)":"Sad or Crying",
+    u"\(:_;\)":"Sad or Crying",
+    u"\(ToT\)":"Sad or Crying",
+    u";_;":"Sad or Crying",
+    u";-;":"Sad or Crying",
+    u";n;":"Sad or Crying",
+    u";;":"Sad or Crying",
+    u"Q\.Q":"Sad or Crying",
+    u"T\.T":"Sad or Crying",
+    u"QQ":"Sad or Crying",
+    u"Q_Q":"Sad or Crying",
+    u"\(-\.-\)":"Shame",
+    u"\(-_-\)":"Shame",
+    u"\(一一\)":"Shame",
+    u"\(；一_一\)":"Shame",
+    u"\(=_=\)":"Tired",
+    u"\(=\^\·\^=\)":"cat",
+    u"\(=\^\·\·\^=\)":"cat",
+    u"=_\^=	":"cat",
+    u"\(\.\.\)":"Looking down",
+    u"\(\._\.\)":"Looking down",
+    u"\^m\^":"Giggling with hand covering mouth",
+    u"\(\・\・?":"Confusion",
+    u"\(?_?\)":"Confusion",
+    u">\^_\^<":"Normal Laugh",
+    u"<\^!\^>":"Normal Laugh",
+    u"\^/\^":"Normal Laugh",
+    u"\（\*\^_\^\*）" :"Normal Laugh",
+    u"\(\^<\^\) \(\^\.\^\)":"Normal Laugh",
+    u"\(^\^\)":"Normal Laugh",
+    u"\(\^\.\^\)":"Normal Laugh",
+    u"\(\^_\^\.\)":"Normal Laugh",
+    u"\(\^_\^\)":"Normal Laugh",
+    u"\(\^\^\)":"Normal Laugh",
+    u"\(\^J\^\)":"Normal Laugh",
+    u"\(\*\^\.\^\*\)":"Normal Laugh",
+    u"\(\^—\^\）":"Normal Laugh",
+    u"\(#\^\.\^#\)":"Normal Laugh",
+    u"\（\^—\^\）":"Waving",
+    u"\(;_;\)/~~~":"Waving",
+    u"\(\^\.\^\)/~~~":"Waving",
+    u"\(-_-\)/~~~ \($\·\·\)/~~~":"Waving",
+    u"\(T_T\)/~~~":"Waving",
+    u"\(ToT\)/~~~":"Waving",
+    u"\(\*\^0\^\*\)":"Excited",
+    u"\(\*_\*\)":"Amazed",
+    u"\(\*_\*;":"Amazed",
+    u"\(\+_\+\) \(@_@\)":"Amazed",
+    u"\(\*\^\^\)v":"Laughing,Cheerful",
+    u"\(\^_\^\)v":"Laughing,Cheerful",
+    u"\(\(d[-_-]b\)\)":"Headphones,Listening to music",
+    u'\(-"-\)':"Worried",
+    u"\(ーー;\)":"Worried",
+    u"\(\^0_0\^\)":"Eyeglasses",
+    u"\(\＾ｖ\＾\)":"Happy",
+    u"\(\＾ｕ\＾\)":"Happy",
+    u"\(\^\)o\(\^\)":"Happy",
+    u"\(\^O\^\)":"Happy",
+    u"\(\^o\^\)":"Happy",
+    u"\)\^o\^\(":"Happy",
+    u":O o_O":"Surprised",
+    u"o_0":"Surprised",
+    u"o\.O":"Surpised",
+    u"\(o\.o\)":"Surprised",
+    u"oO":"Surprised",
+    u"\(\*￣m￣\)":"Dissatisfied",
+    u"\(‘A`\)":"Snubbed or Deflated"
+    }
+    '''
+    Remove emojicon or convert to english text.
+    '''
+    def __init__(self, remove: bool = True):
+        '''
+        If remove is true, remove it else convert it to text.
+        '''
+        self.remove = remove
+    
+    def __call__(self, text: str, lang: str = None) -> tuple:
+        if self.remove:
+            emoticon_pattern = re.compile(u'(' + u'|'.join(k for k in self.EMOTICONS) + u')')
+            return emoticon_pattern.sub(r'', text), lang
+        else:
+            for emot in self.EMOTICONS:
+                text = re.sub(u'('+emot+')', "_".join(self.EMOTICONS[emot].replace(",","").split()), text)
+            return text, lang
+        
+class InvalidCharTransformation(TextTransformation):
+    '''
+    Remove unicode characters.
+    '''
+    invalid_chars = ['\\', '•',  '~', '@', '£',
+    '·', '_', '©', '^', '®', '`',  '<', '→', '°', '€', '™', '›',  '♥', '←', '×', '§', '″', '′', '█', '½', '…', '\xa0', '\t',
+    '“', '★', '”', '–', '●', '►', '−', '¢', '²', '¬', '░', '¶', '↑', '±', '¿', '▾', '═', '¦', '║', '―', '¥', '▓', '—', '‹', '─', '\u3000', '\u202f',
+    '▒', '：', '¼', '⊕', '▼', '▪', '†', '■', '’', '▀', '¨', '▄', '♫', '☆', '¯', '♦', '¤', '▲', '¸', '¾', '⋅', '‘', '∞', '«',
+    '∙', '）', '↓', '、', '│', '（', '»', '，', '♪', '╩', '╚', '³', '・', '╦', '╣', '╔', '╗', '▬', '❤', 'ï', 'Ø', '¹', '≤', '‡', '√', ]
+    def __init__(self):
+        self.joined_invalid_chars = ''.join(self.invalid_chars)
+    
+    def __call__(self, text: str, lang: str = None) -> tuple:
+        text = text.translate(text.maketrans('', '', self.joined_invalid_chars))
+        return text, lang
+
+class CorrectMispellTransformation(TextTransformation):
+    '''
+    Correct common multilingual mispelling.
+    '''
+    common_mispells={
+        'wikiproject': ' wiki project ',
+        ' vikipedi ':  ' wikipedia ',
+        ' wiki ':  ' wikipedia ',
+        ' википедии ': ' wikipedia ',
+        ' вики ': ' wikipedia ',
+        ' википедия ': ' wikipedia ', 
+        ' viki ': ' wikipedia ',
+        ' wikipedien ': ' wikipedia ',
+        ' википедию ': ' wikipedia ',
+        ' msg ': ' message ',
+        ' msj ': ' message ',
+        ' mesaj ': ' message ',
+        ' px ': ' pixel ',
+        'salebot': ' sale bot '
+    }
+    def __init__(self, only_common=True):
+        '''
+        Only_common: if true, we are applying only common mispelling correction.
+        '''
+        self.only_common = only_common
+        self.mispell_re = re.compile('(%s)' % '|'.join(self.common_mispells.keys()))
+        
+        if not only_common:
+            self.spell_checkers = {'en': language_tool_python.LanguageTool('en-US')}
+    
+    def _replace_common_mispells(self, text: str) -> str:
         def replace(match):
-            return mispellings[match.group(0)]
+            return self.common_mispells[match.group(0)]
     
-        return mispellings_re.sub(replace, text)
-    else:
+        return self.mispell_re.sub(replace, text)
+    
+    def _get_spell_checker(self, lang):
+      if lang is None:
+        return language_tool_python.LanguageTool(lang)
+
+      _exist = lang in self.spell_checkers
+      
+      if not _exist and lang in ['ru', 'en', 'es', 'fr', 'pt']:
+        local_lang = lang if lang != 'pt' else 'pt-PT'
+        self.spell_checkers[lang] = language_tool_python.LanguageTool(local_lang)
+      
+      elif not _exist and lang == 'tr':
+        obj = detector.TurkishNLP()
+        obj.download()
+        obj.create_word_set()
+        self.spell_checkers[lang] = obj
+      
+      return self.spell_checkers[lang]
+    
+    def __call__(self, text: str, lang: str = None) -> tuple:
+        text = self._replace_common_mispells(text)
+        if not self.only_common:
+            spell_checker = self._get_spell_checker(lang)
+            
+            if lang is None or lang in ['ru', 'en', 'es', 'fr', 'pt']:
+              text = spell_checker.correct(text)        
+            
+            elif lang == 'tr':
+              lwords = spell_checker.list_words(text)
+              corrected_words = spell_checker.auto_correct(lwords)
+              text = " ".join(corrected_words)
+          
+        return text, lang
+
+class NumericTransformation(TextTransformation):
+    '''
+    Remove or convert numeric values to words.
+    '''
+    def __init__(self, remove: bool = True):
+        '''
+        If remove is true, remove numbers else convert numbers to words.
+        '''
+        self.remove = remove
+        self.numeric_pattern = '[+-]?(\d+(\.\d*)?|\.\d+)'
+    
+    def __call__(self, text: str, lang: str = None) -> tuple:
+        def replace_number(match):
+          
+          matching = match.group(0)
+          if matching:
+            try:
+                return num2words(matching, lang=lang)
+            except NotImplementedError:
+                return num2words(matching, lang='en')
+
+        if self.remove:
+            text = re.sub(self.numeric_pattern, '', text)
+        else:
+            text = re.sub(self.numeric_pattern, replace_number, text)
+
+        return text, lang
+
+class CombineTransformation(TextTransformation):
+    '''
+    Chain multiple text transformation.
+    '''
+    def __init__(self, transformations: list, return_lang: bool = False):
+        self._transformations = transformations
+        self._return_lang = return_lang
+        
+    def __call__(self, text: str, lang: str = None) -> tuple:
+        for transformation in self._transformations:
+            text, lang = transformation(text, lang)
+        
+        if self._return_lang:
+            return text, lang
+        
         return text
-
-def get_sentences(text, lang='en'):
-    return sent_tokenize(str(text), LANGS.get(lang, 'english'))
-
-def exclude_duplicate_sentences(text, lang='en'):
-    sentences = []
-    for sentence in get_sentences(text, lang):
-        sentence = sentence.strip()
-        if sentence not in sentences:
-            sentences.append(sentence)
     
-    return ' '.join(sentences)
+    def append(self, transformation: TextTransformation):
+        self._transformations.append(transformation)
 
 
-def clean_data(df, columns: list):
+def clean_data(df, columns: list, is_paralell : bool = False):
+    transformers = CombineTransformation(
+    [
+        LowerCaseTransformation(),
+        RegexTransformation(),
+        # EmojiTransformation(remove=True),
+        # EmojiconTransformation(remove=True),
+        NumericTransformation(remove=True),
+        # InvalidCharTransformation(),
+        # CorrectMispellTransformation(),
+        # PunctuationTransformation()
+    ]
+)
     for col in columns:
         if col in df.columns:
-            # df[col] = df[col].apply(lambda x: clean_numbers(x))
-            df[col] = df[[col, 'lang']].parallel_apply(lambda x: clean_text(x[col], x['lang']), axis=1)
-            # df[col] = df[[col, 'lang']].parallel_apply(lambda x: replace_typical_misspell(x[col], x['lang']), axis=1)
-            # df[col] = df[[col, 'lang']].parallel_apply(lambda x: handle_contractions(x[col], x['lang']), axis=1)  
-            # # df[col] = df[col].parallel_apply(lambda x: fix_quote(x))
-            # df[col] = df[[col, 'lang']].parallel_apply(lambda x: clean_non_latin(x[col], x['lang']), axis=1)
-            # df[col] = df[col].parallel_apply(lambda x: clean_puncts(x.lower())) 
+            if is_paralell:
+                df[col] = df[[col, 'lang']].parallel_apply(lambda x: transformers(x[col], x['lang']), axis=1)
+            else:
+                df[col] = df[[col, 'lang']].apply(lambda x: transformers(x[col], x['lang']), axis=1)
     
     return df
 
