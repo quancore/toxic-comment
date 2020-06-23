@@ -1,6 +1,9 @@
 This repo includes a single model (no ensemble) for [toxic classification challange](https://www.kaggle.com/c/jigsaw-multilingual-toxic-comment-classification/overview). The public LB score is ~ 0.93.
+
 The backbone model from Hugginface is finetuned in the notebook _pytorch_model.ipynb_.
+
 The model trained using Google Cloud: https://www.kaggle.com/quanncore/xlm-roberta-large
+
 The notebook for model inference on test data of toxic classification: https://www.kaggle.com/quanncore/pytorch-tpu-inference
 
 Several methods applied in the model:
