@@ -6,6 +6,8 @@ The model trained using Google Cloud: https://www.kaggle.com/quanncore/xlm-rober
 
 The notebook for model inference on test data of toxic classification: https://www.kaggle.com/quanncore/pytorch-tpu-inference
 
+Presentation for the project: https://docs.google.com/presentation/d/1Xq4q_AWzQQY08NwAKbgzBaVmv4a_iquNufSz5TTqUys/edit?usp=sharing
+
 Several methods applied in the model:
 - Translated training data (from English to other languages) have been used.
 - Further fine-tuning has been performed on the validation dataset.
